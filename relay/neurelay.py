@@ -55,6 +55,7 @@ class Server:
       if data:
          if self.s not in self.outputs:
                self.outputs.append(self.s)
+         data = data[3:]
          data = key.decrypt(data)
          print data 
          if 'HI!' in data[:3]:

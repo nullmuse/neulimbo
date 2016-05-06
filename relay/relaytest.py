@@ -19,7 +19,7 @@ magic += data
 data = key.encrypt(magic, 32) 
 s.send(data[0])
 this = s.recv(1024) 
-print this 
+print this
 s.close()
 
 
