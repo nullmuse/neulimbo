@@ -1,5 +1,6 @@
 from Crypto.PublicKey import RSA
 from Crypto import Random
+from Crypto.Hash import SHA256
 import sys
 import socket
 import time
@@ -156,6 +157,67 @@ class SocketClientThread(threading.Thread):
 
    def _success_reply(self, data=None):
       return Reply(Reply.SUCCESS, data)
+
+
+
+def dsign(key, item):
+   hash = SHA256.new(item).digest()
+   signature = key.sign(hash, '')
+   return signature 
+
+
+def verify(pubkey, signature, item)
+   hash = SHA256.new(item).digest()
+   return pubkey.verify(hash, signature)
+
+
+
+class neuPacket(object):
+   TREQ, PUSH   = range(3)
+   magic = "NLMB"
+   def __init__(self, id, data=None, dirid,  sig):
+      super(neuPacket, self).__init__()
+      self.id = id
+      self.data = data
+      self.dirid = dirid
+      self.sig = sig
+
+
+def send_packet(npack, key, network):
+   packet = npack.magic + str(npack.id) + npack.data + npack.magic + npack.dirid + npack.magic +  npack.sig
+   message = key.encrypt(packet, 32)
+   startup = Command(Command.SEND, message[0])
+   network.cmd_q.put(startup)
+
+
+   
+
+def req_tree(key, relaykey, network):
+   pubkey = key.publickey()
+   sig = dsign(key,pubkey)
+   treepacket = neuPacket(neuPacket.TREQ,key.publickey(),sig) 
+   send_packet(treepacket, relaykey, network) 
+
+
+def push_item(key, pubkey, relaykey, network, doc):
+      sig = dsign(key,doc)
+      doc = encrypt_document(pubkey, doc) 
+      packet = neuPacket(neuPacket.PUSH, doc, sig)
+      send_packet(packet, relaykey, network) 
+
+
+
+
+   
+
+
+   
+
+
+
+
+
+
 
 
 
