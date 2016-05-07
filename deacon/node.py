@@ -9,7 +9,7 @@ import struct
 import Queue
 import os 
 import getpass
-
+import glob
 
 def pass_validate(passw):
    password = getpass.getpass('Enter a strong passphrase for your private key: ')
@@ -63,6 +63,10 @@ def decrypt_document(key, document):
    doc.write(this)
 
 
+def load_document(key, document):
+   this = open(document,'rb').read()
+   this = key.decrypt(this)
+   return this
 
 
 
@@ -166,21 +170,21 @@ def dsign(key, item):
    return signature 
 
 
-def verify(pubkey, signature, item)
+def verify(pubkey, signature, item):
    hash = SHA256.new(item).digest()
    return pubkey.verify(hash, signature)
 
 
 
 class neuPacket(object):
-   TREQ, PUSH   = range(3)
+   TREQ, KPUSH, PUSH   = range(3)
    magic = "NLMB"
-   def __init__(self, id, data=None, dirid,  sig):
+   def __init__(self, id, data=None, dirid=None,  sig=None):
       super(neuPacket, self).__init__()
       self.id = id
-      self.data = data
-      self.dirid = dirid
-      self.sig = sig
+      self.data = data or None
+      self.dirid = dirid or None
+      self.sig = sig or None
 
 
 def send_packet(npack, key, network):
@@ -195,21 +199,129 @@ def send_packet(npack, key, network):
 def req_tree(key, relaykey, network):
    pubkey = key.publickey()
    sig = dsign(key,pubkey)
-   treepacket = neuPacket(neuPacket.TREQ,key.publickey(),sig) 
+   treepacket = neuPacket(neuPacket.TREQ,pubkey,sig) 
    send_packet(treepacket, relaykey, network) 
+
 
 
 def push_item(key, pubkey, relaykey, network, doc):
       sig = dsign(key,doc)
-      doc = encrypt_document(pubkey, doc) 
+      pkey = RSA.importKey(pubkey)
+      doc = pkey.encrypt(doc, 32)
       packet = neuPacket(neuPacket.PUSH, doc, sig)
       send_packet(packet, relaykey, network) 
 
 
+def mass_push(key, k_register, relaykey, network, doc):
+     sig = dsign(key,doc)
+     for item in k_register:
+         pkey = RSA.importKey(item)
+         doc = pkey.encrypt(doc, 32)
+         packet = neuPacket(neuPacket.PUSH, doc, sig)
+         send_packet(packet, relaykey, network)
+
+def push_key(key, relaykey, network):
+   pubkey = key.publickey().exportKey('PEM')
+   sig = dsign(key,pubkey)
+   kpacket = neuPacket(neuPacket.KPUSH,pubkey, '', sig)
+   send_packet(kpacket, relaykey, network)
 
 
+
+def handle_packet(key, relaykey, network, k_register):
+   try:
+      packet = network.reply_q.get()
+      if packet:
+         dpacket = key.decrypt(packet.data)
+         if dpacket[:3] is not 'NLMB':
+            return 1
+         if dpacket[0] == neuPacket.TREQ:
+            tree_friend(dpacket, key, relaykey, network, k_register)
+         elif dpacket[0] == neuPacket.KPUSH:
+            add_key(dpacket, k_register) 
+         elif dpacket[0] == neuPacket.PUSH:
+            dpacket  = dpacket[3:]
+            pt1 = dpacket.index('NLMB')
+            pt = dpacket[(pt1 + 4):].index('NLMB')
+            signature = dpacket[(pt + 4):]
+            data = dpacket[1:pt1]
+            pt = 0
+            for item in k_register:
+               if verify(item, signature, data) == True:
+                  break
+               pt +=1
+            if pt == len(k_register):
+               return 1
+            add_doc(dpacket, key) 
+   except:
+      pass         
+
+
+     
+def add_key(packet, k_register):
+    pt1 = packet.index('NLMB')
+    key = packet[0:pt1]
+    if key not in k_register: 
+       k_register.append(key)
+       os.system('echo {0}>keys'.format(key))
    
 
+def tree_friend(packet, key, relaykey, network, k_register):
+   add_key(packet, k_register) 
+   push_key(key, relaykey, network)
+   for filename in glob.glob('neudocs/*'):
+      filed = load_document(key,filename)
+      push_item(key, k_register[-1], relaykey, network, filed) 
+
+def compare_hash(data,filename):
+   if SHA256.new(data).digest() == SHA256.new(filename).digest():   
+      return True
+   return False 
+
+def add_doc(packet, key):
+   pt1 = packet.index('NLMB')
+   data = packet[0:pt1]
+   pt = packet[pt1:].index('NLMB')
+   dirid = packet[pt1:pt] 
+   os.chdir('neudocs')
+   dirlist = dirid.split('/')
+   filename = dirlist[-1]
+   dirlist = dirlist[:-1]
+   retlist = []
+   for item in dirlist:
+      retlist.append('../')
+      try:
+         os.chdir(item)
+      except:
+         os.system('mkdir {0}'.format(item))
+         os.chdir(item)
+   if os.system('dir {0}'.format(filename)) == 0:
+      f1 = load_file(key, filename)
+      if compare_hash(data,f1) == True:
+         return 1
+   file1 = open(filename,'w')
+   data = key.encrypt(data, 32)
+   file1.write(data)
+   file1.flush()
+   file.close() 
+   for item in retlist:
+      os.chdir(item)
+
+ 
+              
+     
+def handle_changes(key, relaykey, network, k_register, checklist):
+   newlist = glob.glob('neudocs/*')
+   for filename in newlist:
+      if filename not in checkist:
+         try:
+            doc = load_file(key,filename)
+            mass_push(key, k_register, relaykey, network, doc)
+            checklist.append(filename) 
+         except:
+            continue 
+   
+   return newlist
 
    
 
@@ -246,23 +358,23 @@ if __name__ == '__main__':
       print e
       print 'no relay key found. exiting' 
       sys.exit() 
-
-
+   
+   try:
+      os.chdir('neudocs')
+      os.chdir('../')
+   except:
+      os.system('mkdir neudocs')
+   checklist = glob.glob('neudocs/*') 
+   k_register = [] 
    network = SocketClientThread()
    startup = Command(Command.CONNECT,('localhost',4443))
    print startup.type
    print startup.data
-   network.cmd_q.put(startup)  
-   message = 'HI!fuuuck'
-   network.start()  
-   rep = network.reply_q.get() 
-   print rep.data
-   message = relay_key.encrypt(message, 32)
-   startup = Command(Command.SEND, message[0]) 
-   network.cmd_q.put(startup) 
-   print rep.data
-   encrypt_document(key,"text")    
-   decrypt_document(key,"text")
-   
-             
-     
+   network.start()
+   network.cmd_q.put(startup)
+   res = network.reply_q.get()
+   print res.data
+   while True:
+      handle_packet(key, relay_key, network, k_register)             
+      checklist =  handle_changes(key, relay_key, network, k_register, checklist)
+      time.sleep(1) 
