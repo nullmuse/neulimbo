@@ -136,6 +136,8 @@ class SocketClientThread(threading.Thread):
 
    def _handle_RECEIVE(self, cmd): 
       try:
+         data = ''
+         msg_len = 0
          header_data = self._recv_n_bytes(4)
          if len(header_data) == 4:
             msg_len = struct.unpack('<L', header_data)[0]
@@ -179,12 +181,12 @@ def verify(pubkey, signature, item):
 class neuPacket(object):
    TREQ, KPUSH, PUSH   = range(3)
    magic = "NLMB"
-   def __init__(self, id, data=None, dirid=None,  sig=None):
+   def __init__(self, id, data=' ', dirid=' ',  sig=' '):
       super(neuPacket, self).__init__()
       self.id = id
-      self.data = data or None
-      self.dirid = dirid or None
-      self.sig = sig or None
+      self.data = data or ' '
+      self.dirid = dirid or ' '
+      self.sig = sig or ' '
 
 
 def send_packet(npack, key, network):
@@ -230,8 +232,11 @@ def push_key(key, relaykey, network):
 
 def handle_packet(key, relaykey, network, k_register):
    try:
+      rec_command = Command(Command.RECEIVE)
+      network.cmd_q.put(rec_command)
       packet = network.reply_q.get()
       if packet:
+         print packet.data
          dpacket = key.decrypt(packet.data)
          if dpacket[:3] is not 'NLMB':
             return 1

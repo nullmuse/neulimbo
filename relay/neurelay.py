@@ -8,6 +8,28 @@ import Queue
 
 buffer_size = 4096
 delay = 0.0001
+
+def cryptslice(data, key):
+   bound = 0
+   cryptdata = ''
+   slice = ''
+   zone = "ZON"
+   it = data.count(zone)
+   print it
+   while it > 0:
+      try:
+         point = data.index(zone)
+         slice = data[:point]
+         data = data[(point + 3):]
+         cryptdata += key.decrypt(slice)
+         it -= 1
+      except Exception as e:
+         return e
+   return cryptdata
+
+
+
+
 class Server:
    inputs = [] 
    outputs = [] 
@@ -42,7 +64,6 @@ class Server:
 
 
 
-
    def on_accept(self):
       connection, client_addr = self.s.accept() 
       print 'new connection from', client_addr
@@ -51,21 +72,21 @@ class Server:
       self.message_queues[connection] = Queue.Queue() 
       
    def on_recv(self, key):
-      data = self.s.recv(1024) 
+      data = self.s.recv(4096) 
       if data:
          if self.s not in self.outputs:
                self.outputs.append(self.s)
-         data = data[3:]
-         data = key.decrypt(data)
-         print data 
-         if 'HI!' in data[:3]:
-            self.message_queues[self.s].put('GT')
+         print len(data)
+
+         data = cryptslice(data, key) 
+         print data
+         if 'NLMB' in data:
+            print 'bueno magic'
             for item in self.outputs:
                if item is not self.s:
                   self.message_queues[item].put(data[3:])  
          else:
             print 'bad magic'
-            self.message_queues[self.s].put('BT')
      
       else:
          if self.s in self.outputs:
