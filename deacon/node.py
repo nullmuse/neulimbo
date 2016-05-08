@@ -1,6 +1,7 @@
 from Crypto.PublicKey import RSA
 from Crypto import Random
 from Crypto.Hash import SHA256
+import binascii
 import sys
 import socket
 import time
@@ -10,7 +11,7 @@ import Queue
 import os 
 import getpass
 import glob
-
+import re
 def pass_validate(passw):
    password = getpass.getpass('Enter a strong passphrase for your private key: ')
    password2 = getpass.getpass('Enter it again. Make sure you remember your password! ') 
@@ -20,6 +21,22 @@ def pass_validate(passw):
    else:
       passw.append(password) 
       return 0
+
+
+def pack(fmt, *args):
+    (byte_order, fmt, data) = (fmt[0], fmt[1:], '') if fmt and fmt[0] in ('@', '=', '<', '>', '!') else ('@', fmt, '')
+    fmt = filter(None, re.sub("p", "\tp\t",  fmt).split('\t'))
+    for sub_fmt in fmt:
+        if sub_fmt == 'p':
+            (sub_args, args) = ((args[0],), args[1:]) if len(args) > 1 else ((args[0],), [])
+            sub_fmt = str(len(sub_args[0]) + 1) + 'p'
+        else:
+            (sub_args, args) = (args[:len(sub_fmt)], args[len(sub_fmt):])
+            sub_fmt = byte_order + sub_fmt
+        data += struct.pack(sub_fmt, *sub_args)
+    return data
+
+
 
 
 def genkeys():
@@ -129,15 +146,16 @@ class SocketClientThread(threading.Thread):
    def _handle_SEND(self, cmd):
       header = struct.pack('<L', len(cmd.data)) 
       try:
-         self.socket.sendall(header + cmd.data)
+         #self.socket.sendall(header + cmd.data)
+         self.socket.send(cmd.data)
          self.reply_q.put(self._success_reply()) 
       except Exception as e:
          self.reply_q.put(self._error_reply(str(e)))
 
    def _handle_RECEIVE(self, cmd): 
       try:
-         data = ''
          msg_len = 0
+         data = ''
          header_data = self._recv_n_bytes(4)
          if len(header_data) == 4:
             msg_len = struct.unpack('<L', header_data)[0]
@@ -185,16 +203,65 @@ class neuPacket(object):
       super(neuPacket, self).__init__()
       self.id = id
       self.data = data or ' '
-      self.dirid = dirid or ' '
+      self.dirid = dirid or '0'
       self.sig = sig or ' '
+
+
+def cryptpack(data, key):
+   it = 256
+   bound = 0
+   cryptdata = ''
+   slice = ''
+   zone = 'ZON'
+   while (len(data) - bound) >= 256:
+         slice = data[bound:it]
+         slice = key.encrypt(slice, 32)
+         cryptdata += slice[0]
+         cryptdata += zone
+         bound = it
+         it += 256
+   if (len(data) - bound) > 0:
+      print len(data) - bound
+      slice = data[bound:] 
+      slice = key.encrypt(slice, 32)
+      cryptdata += slice[0]
+      cryptdata += zone
+   print 
+   return cryptdata
+
+def cryptslice(data, key):
+   bound = 0
+   cryptdata = ''
+   slice = ''
+   zone = "ZON"
+   it = data.count(zone)
+   print it 
+   while it > 0:
+      try:
+         point = data.index(zone)
+         slice = data[:point]
+         data = data[(point + 3):]
+         cryptdata += key.decrypt(slice)
+         it -= 1
+      except Exception as e:
+         return e
+   return cryptdata
+
 
 
 def send_packet(npack, key, network):
    packet = npack.magic + str(npack.id) + npack.data + npack.magic + npack.dirid + npack.magic +  npack.sig
-   message = key.encrypt(packet, 32)
-   startup = Command(Command.SEND, message[0])
+   ndata = binascii.hexlify(npack.data)
+   print binascii.hexlify(SHA256.new(packet).digest())
+   file = RSA.importKey(open('pkey.pem').read())
+   #message = key.encrypt(teststr, 32) 
+   message = cryptpack(packet, key)
+   retstr = cryptslice(message,file)
+   print(len(retstr))
+   print binascii.hexlify(SHA256.new(retstr).digest())
+   startup = Command(Command.SEND, message)
    network.cmd_q.put(startup)
-
+   return network.reply_q.get()
 
    
 
@@ -223,9 +290,9 @@ def mass_push(key, k_register, relaykey, network, doc):
          send_packet(packet, relaykey, network)
 
 def push_key(key, relaykey, network):
-   pubkey = key.publickey().exportKey('PEM')
+   pubkey = key.publickey().exportKey('DER')
    sig = dsign(key,pubkey)
-   kpacket = neuPacket(neuPacket.KPUSH,pubkey, '', sig)
+   kpacket = neuPacket(neuPacket.KPUSH,pubkey, '', str(sig[0]))
    send_packet(kpacket, relaykey, network)
 
 
@@ -378,6 +445,7 @@ if __name__ == '__main__':
    network.start()
    network.cmd_q.put(startup)
    res = network.reply_q.get()
+   res = push_key(key, relay_key, network)
    print res.data
    while True:
       handle_packet(key, relay_key, network, k_register)             
