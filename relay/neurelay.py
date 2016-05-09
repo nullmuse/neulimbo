@@ -55,10 +55,11 @@ class Server:
          for self.s in writable:
             try:
                next_msg = self.message_queues[self.s].get_nowait() 
+               self.s.send(next_msg)
             except Exception:
-               pass 
-            else:
-               self.s.send(next_msg) 
+               pass
+             
+    
         
 
 
@@ -77,17 +78,20 @@ class Server:
          if self.s not in self.outputs:
                self.outputs.append(self.s)
          print len(data)
-
-         data = cryptslice(data, key) 
+         data = cryptslice(data, key)
+          
          print data
          if 'NLMB' in data:
             print 'bueno magic'
+            #data = + data
             for item in self.outputs:
                if item is not self.s:
-                  self.message_queues[item].put(data[3:])  
+                  self.message_queues[item].put(data)  
          else:
             print 'bad magic'
-     
+            for item in self.outputs:
+               if item is not self.s:
+                  self.message_queues[item].put(data)    
       else:
          if self.s in self.outputs:
             self.outputs.remove(self.s)

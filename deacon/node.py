@@ -82,7 +82,7 @@ def decrypt_document(key, document):
 
 def load_document(key, document):
    this = open(document,'rb').read()
-   this = key.decrypt(this)
+   this = cryptslice(this, key)
    return this
 
 
@@ -156,11 +156,13 @@ class SocketClientThread(threading.Thread):
       try:
          msg_len = 0
          data = ''
-         header_data = self._recv_n_bytes(4)
-         if len(header_data) == 4:
-            msg_len = struct.unpack('<L', header_data)[0]
-            data = self._recv_n_bytes(msg_len)
-         if len(data) == msg_len:
+         #header_data = self._recv_n_bytes(4)
+         #if len(header_data) == 4:
+         #   msg_len = struct.unpack('<L', header_data)[0]
+         #data = self._recv_n_bytes(msg_len)
+         data = self.socket.recv(4096)
+         print data
+         if len(data) == len(data):
             self.reply_q.put(self._success_reply(data)) 
             return 
          self.reply_q.put(self._error_reply('Socket closed prematurely')) 
@@ -191,6 +193,7 @@ def dsign(key, item):
 
 
 def verify(pubkey, signature, item):
+   print 'verifying'
    hash = SHA256.new(item).digest()
    return pubkey.verify(hash, signature)
 
@@ -266,31 +269,33 @@ def send_packet(npack, key, network):
    
 
 def req_tree(key, relaykey, network):
-   pubkey = key.publickey()
+   pubkey = key.publickey().exportKey('PEM')
    sig = dsign(key,pubkey)
-   treepacket = neuPacket(neuPacket.TREQ,pubkey,sig) 
+   treepacket = neuPacket(neuPacket.TREQ,pubkey,'',str(sig[0])) 
    send_packet(treepacket, relaykey, network) 
 
 
 
-def push_item(key, pubkey, relaykey, network, doc):
+def push_item(key, pubkey, relaykey, network, doc, dirid):
+      doc = "NLMB" + doc
       sig = dsign(key,doc)
-      pkey = RSA.importKey(pubkey)
-      doc = pkey.encrypt(doc, 32)
-      packet = neuPacket(neuPacket.PUSH, doc, sig)
+      pkey = RSA.importKey(pubkey) 
+      doc = cryptpack(doc, pkey)
+      packet = neuPacket(neuPacket.PUSH, doc, dirid, str(sig[0]))
       send_packet(packet, relaykey, network) 
 
 
 def mass_push(key, k_register, relaykey, network, doc):
+     doc = "NLMB" + doc
      sig = dsign(key,doc)
      for item in k_register:
          pkey = RSA.importKey(item)
-         doc = pkey.encrypt(doc, 32)
-         packet = neuPacket(neuPacket.PUSH, doc, sig)
+         doc = cryptpack(doc, pkey)
+         packet = neuPacket(neuPacket.PUSH, doc, dirid, str(sig[0]))
          send_packet(packet, relaykey, network)
 
 def push_key(key, relaykey, network):
-   pubkey = key.publickey().exportKey('DER')
+   pubkey = key.publickey().exportKey('PEM')
    sig = dsign(key,pubkey)
    kpacket = neuPacket(neuPacket.KPUSH,pubkey, '', str(sig[0]))
    send_packet(kpacket, relaykey, network)
@@ -303,47 +308,59 @@ def handle_packet(key, relaykey, network, k_register):
       network.cmd_q.put(rec_command)
       packet = network.reply_q.get()
       if packet:
-         print packet.data
-         dpacket = key.decrypt(packet.data)
-         if dpacket[:3] is not 'NLMB':
+         print 'got a fucking packet'
+         packet = packet.data
+         print packet[4]
+         if 'NLMB' not in packet:
+            print 'fucked'
             return 1
-         if dpacket[0] == neuPacket.TREQ:
-            tree_friend(dpacket, key, relaykey, network, k_register)
-         elif dpacket[0] == neuPacket.KPUSH:
-            add_key(dpacket, k_register) 
-         elif dpacket[0] == neuPacket.PUSH:
-            dpacket  = dpacket[3:]
-            pt1 = dpacket.index('NLMB')
-            pt = dpacket[(pt1 + 4):].index('NLMB')
-            signature = dpacket[(pt + 4):]
-            data = dpacket[1:pt1]
+         if int(packet[4]) == neuPacket.TREQ:
+            tree_friend(packet[5:], key, relaykey, network, k_register)
+         elif int(packet[4]) == neuPacket.KPUSH:
+            print 'add_key tripped'
+            add_key(packet[5:], k_register) 
+         elif int(packet[4]) == neuPacket.PUSH:
+            print 'push tripped'
+            packet  = packet[4:]
+            pt1 = packet.index('NLMB')
+            pt = packet[(pt1 + 4):].index('NLMB')
+            print packet
+            signature = packet[(pt + 4):]
+            data = packet[1:pt1]
             pt = 0
+            print signature
+            print 'we are here'
+            print len(data)
             for item in k_register:
-               if verify(item, signature, data) == True:
+               if verify(RSA.importKey(item), signature, long(float(data))) == True:
+                  print 'digital signature verified'
                   break
                pt +=1
             if pt == len(k_register):
+               print 'digital signature failed'
                return 1
-            add_doc(dpacket, key) 
-   except:
-      pass         
+            add_doc(packet[5:], key) 
+   except Exception as e:
+      print e
 
 
      
 def add_key(packet, k_register):
+    print 'in add_key'
     pt1 = packet.index('NLMB')
     key = packet[0:pt1]
     if key not in k_register: 
        k_register.append(key)
-       os.system('echo {0}>keys'.format(key))
+       os.system('echo \"{0}\" >keys'.format(key))
    
 
 def tree_friend(packet, key, relaykey, network, k_register):
+   print 'in tree_friend'
    add_key(packet, k_register) 
    push_key(key, relaykey, network)
    for filename in glob.glob('neudocs/*'):
       filed = load_document(key,filename)
-      push_item(key, k_register[-1], relaykey, network, filed) 
+      push_item(key, k_register[-1], relaykey, network, filed, filename) 
 
 def compare_hash(data,filename):
    if SHA256.new(data).digest() == SHA256.new(filename).digest():   
@@ -351,8 +368,13 @@ def compare_hash(data,filename):
    return False 
 
 def add_doc(packet, key):
+   print 'in add_doc'
    pt1 = packet.index('NLMB')
-   data = packet[0:pt1]
+   data = cryptslice(packet[0:pt1],key)
+   test = data[:4]
+   if test is not 'NLMB':
+      return 1
+   data = data[4:]
    pt = packet[pt1:].index('NLMB')
    dirid = packet[pt1:pt] 
    os.chdir('neudocs')
@@ -372,7 +394,7 @@ def add_doc(packet, key):
       if compare_hash(data,f1) == True:
          return 1
    file1 = open(filename,'w')
-   data = key.encrypt(data, 32)
+   data = cryptpack(data, key)
    file1.write(data)
    file1.flush()
    file.close() 
@@ -385,10 +407,10 @@ def add_doc(packet, key):
 def handle_changes(key, relaykey, network, k_register, checklist):
    newlist = glob.glob('neudocs/*')
    for filename in newlist:
-      if filename not in checkist:
+      if filename not in checklist:
          try:
             doc = load_file(key,filename)
-            mass_push(key, k_register, relaykey, network, doc)
+            mass_push(key, k_register, relaykey, network, doc, filename)
             checklist.append(filename) 
          except:
             continue 
@@ -445,8 +467,7 @@ if __name__ == '__main__':
    network.start()
    network.cmd_q.put(startup)
    res = network.reply_q.get()
-   res = push_key(key, relay_key, network)
-   print res.data
+   res = req_tree(key, relay_key, network)
    while True:
       handle_packet(key, relay_key, network, k_register)             
       checklist =  handle_changes(key, relay_key, network, k_register, checklist)
