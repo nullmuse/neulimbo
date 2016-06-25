@@ -82,7 +82,7 @@ def decrypt_document(key, document):
 
 def load_document(key, document):
    this = open(document,'rb').read()
-   this = cryptslice(this, key)
+   #this = cryptslice(this, key)
    return this
 
 
@@ -156,18 +156,12 @@ class SocketClientThread(threading.Thread):
       try:
          msg_len = 0
          data = ''
-         chunk = ''
          #header_data = self._recv_n_bytes(4)
          #if len(header_data) == 4:
          #   msg_len = struct.unpack('<L', header_data)[0]
          #data = self._recv_n_bytes(msg_len)
-         chunk = self.socket.recv(4096)
-         while len(chunk) > 0:
-            try:
-               data += chunk 
-               chunk = self.socket.recv(4096)
-            except:
-               break
+         data = self.socket.recv(4096)
+         print data
          if len(data) == len(data):
             self.reply_q.put(self._success_reply(data)) 
             return 
@@ -199,7 +193,6 @@ def dsign(key, item):
 
 
 def verify(pubkey, signature, item):
-   print 'verifying'
    hash = SHA256.new(item).digest()
    return pubkey.verify(hash, signature)
 
@@ -326,24 +319,17 @@ def handle_packet(key, relaykey, network, k_register):
             print 'add_key tripped'
             add_key(packet[5:], k_register) 
          elif int(packet[4]) == neuPacket.PUSH:
-            print 'push tripped'
-            packet  = packet[4:]
+            packet  = packet[3:]
             pt1 = packet.index('NLMB')
             pt = packet[(pt1 + 4):].index('NLMB')
-            print packet
             signature = packet[(pt + 4):]
             data = packet[1:pt1]
             pt = 0
-            print signature
-            print 'we are here'
-            print len(data)
             for item in k_register:
-               if verify(RSA.importKey(item), signature, long(float(data))) == True:
-                  print 'digital signature verified'
+               if verify(item, signature, long(data)) == True:
                   break
                pt +=1
             if pt == len(k_register):
-               print 'digital signature failed'
                return 1
             add_doc(packet[5:], key) 
    except Exception as e:
@@ -473,7 +459,7 @@ if __name__ == '__main__':
    network.start()
    network.cmd_q.put(startup)
    res = network.reply_q.get()
-   res = req_tree(key, relay_key, network)
+   res = push_key(key, relay_key, network)
    while True:
       handle_packet(key, relay_key, network, k_register)             
       checklist =  handle_changes(key, relay_key, network, k_register, checklist)

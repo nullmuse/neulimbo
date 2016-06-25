@@ -73,14 +73,19 @@ class Server:
       self.message_queues[connection] = Queue.Queue() 
       
    def on_recv(self, key):
-      data = self.s.recv(4096) 
+      chunk = self.s.recv(4096)
+      data = ''
+      try: 
+         while chunk:
+            data += chunk
+            chunk = self.s.recv(4096)
+      except:
+            pass
       if data:
          if self.s not in self.outputs:
                self.outputs.append(self.s)
          print len(data)
          data = cryptslice(data, key)
-          
-         print data
          if 'NLMB' in data:
             print 'bueno magic'
             #data = + data
